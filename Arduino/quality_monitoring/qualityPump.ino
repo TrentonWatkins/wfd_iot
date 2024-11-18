@@ -3,147 +3,148 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-// GPIO 5 D1
-#define pin1 13
-#define testpin 2
-#define levelPin A0
-int value = 0;
+// GPIO Definitions
+#define PIN_PUMP 13
+#define PIN_LED 2
+#define PIN_LEVEL A0
+#define PIN_TEMP 13  // For Dallas Temperature sensor
+#define PIN_PH_SENSOR A1
 
-// WiFi
-const char *ssid = "hydro"; // Enter your WiFi name
-const char *password = "hydrohydro";  // Enter WiFi password
+// WiFi Credentials
+const char *ssid = "hydro";
+const char *password = "hydrohydro";
 
-// MQTT Broker
+// MQTT Broker Info
 const char *mqtt_broker = "192.168.1.179";
-const char *topic = "quality/pump";
-const char *levelTopic = "quality/level";
-const char *tempTopic = "quality/temp";
 const char *mqtt_username = "emqx";
 const char *mqtt_password = "public";
 const int mqtt_port = 1883;
 
-//FOR TEMP SENSOR
-const int oneWireBus = 13;          
-// Setup a oneWire instance to communicate with any OneWire devices
-OneWire oneWire(oneWireBus);
-// Pass our oneWire reference to Dallas Temperature sensor 
+// MQTT Topics
+const char *topic_pump = "quality/pump";
+const char *topic_level = "quality/level";
+const char *topic_temp = "quality/temp";
+const char *topic_ph = "quality/ph";
+
+// Temperature Sensor Setup
+OneWire oneWire(PIN_TEMP);
 DallasTemperature sensors(&oneWire);
-// Temperature value
-float temp;
 
-unsigned long previousMillis = 0;   // Stores last time temperature was published
-const long interval = 10000;        // Interval at which to publish sensor readings
+// Variables for Readings
+int level_value = 0;
+float temp_value = 0.0;
+float ph_value = 0.0;
+unsigned long lastMillis = 0;
+const long publishInterval = 10000;
 
+// WiFi and MQTT Setup
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 void setup() {
-    pinMode(pin1, OUTPUT);
-    pinMode(testpin, OUTPUT);
-    // Set software serial baud to 115200;
+    // Serial and GPIO Setup
     Serial.begin(115200);
-    // connecting to a WiFi network
+    pinMode(PIN_PUMP, OUTPUT);
+    pinMode(PIN_LED, OUTPUT);
+    pinMode(PIN_PH_SENSOR, INPUT);
+    pinMode(PIN_LEVEL, INPUT);
+
+    // Connect to WiFi
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
         delay(500);
-        Serial.println("Connecting to WiFi..");
+        Serial.println("Connecting to WiFi...");
     }
-    Serial.println("Connected to the WiFi network");
-    //connecting to a mqtt broker
+    Serial.println("Connected to WiFi");
+
+    // Connect to MQTT Broker
     client.setServer(mqtt_broker, mqtt_port);
     client.setCallback(callback);
-    while (!client.connected()) {
-        const char *client_id = "esp8266-client-";
-        Serial.println("Connecting to public emqx mqtt broker.....");
-        if (client.connect(client_id)) {
-            Serial.println("Public emqx mqtt broker connected");
-        } else {
-            Serial.print("failed with state ");
-            Serial.print(client.state());
-            delay(2000);
-        }
-    }
-  client.subscribe(topic);
-}
+    connectMQTT();
 
-void callback(char *topic, byte *payload, unsigned int length) {
-    Serial.print("Message arrived in topic: ");
-    Serial.println(topic);
-    Serial.print("Message:");
-    String message;
-    for (int i = 0; i < length; i++) {
-        message = message + (char) payload[i];  // convert *byte to string
-    }
-    Serial.print(message);
-    
-    if (strcmp(topic,"quality/pump")==0) {
-      if (message == "on") { 
-        digitalWrite(pin1, HIGH);
-        digitalWrite(testpin, HIGH);
-      }   // LED on
-      if (message == "off") {
-        digitalWrite(pin1, LOW);
-        digitalWrite(testpin, LOW); 
-      }
-    }
-
-    Serial.println();
-    Serial.println("-----------------------");
-}
-
-void checkMQTT(){
-  while (!client.connected()) {
-        const char *client_id = "esp8266-client-quality";
-        Serial.println("Connecting to public emqx mqtt broker.....");
-        if (client.connect(client_id)) {
-            Serial.println("Public emqx mqtt broker connected");
-        } else {
-            Serial.print("failed with state ");
-            Serial.print(client.state());
-            delay(2000);
-        }
-    }
+    // Initialize Sensors
+    sensors.begin();
 }
 
 void loop() {
-  delay(10);                      // wait 10 milliseconds
-  value = analogRead(levelPin); // read the analog value from sensor
+    // Ensure MQTT Connection
+    if (!client.connected()) {
+        connectMQTT();
+    }
+    client.loop();
 
-  unsigned long currentMillis = millis();
-  // Every X number of seconds (interval = 10 seconds) 
-  // it publishes a new MQTT message
-  if (currentMillis - previousMillis >= interval) {
-    // Save the last time a new reading was published
-    previousMillis = currentMillis;
-    // New temperature readings
-    sensors.requestTemperatures(); 
-    // Temperature in Fahrenheit degrees
-    temp = sensors.getTempFByIndex(0);  
+    // Publish Sensor Readings Periodically
+    unsigned long currentMillis = millis();
+    if (currentMillis - lastMillis >= publishInterval) {
+        lastMillis = currentMillis;
 
-  Serial.print("Water Level: ");
-  Serial.println(value);
+        // Read and Publish Temperature
+        sensors.requestTemperatures();
+        temp_value = sensors.getTempFByIndex(0);
+        char tempBuffer[10];
+        dtostrf(temp_value, 1, 2, tempBuffer);
+        client.publish(topic_temp, tempBuffer);
 
+        // Read and Publish Water Level
+        level_value = analogRead(PIN_LEVEL);
+        char levelBuffer[10];
+        itoa(level_value, levelBuffer, 10);
+        client.publish(topic_level, levelBuffer);
 
-  Serial.print("Water Temp: ");
-  Serial.println(temp);
+        // Read and Publish pH Level
+        ph_value = readPH();
+        char phBuffer[10];
+        dtostrf(ph_value, 1, 2, phBuffer);
+        client.publish(topic_ph, phBuffer);
 
-  Serial.println("------------------------- ");
+        Serial.println("Published Sensor Data");
+    }
+}
 
-  char lvl[20];
-  sprintf(lvl, "%d",value);
+void callback(char *topic, byte *payload, unsigned int length) {
+    String message;
+    for (int i = 0; i < length; i++) {
+        message += (char)payload[i];
+    }
+    Serial.print("Message received on topic: ");
+    Serial.println(topic);
+    Serial.print("Message: ");
+    Serial.println(message);
 
-  int tempInt = static_cast<int>(temp);
-  char tmp[20];
-  sprintf(tmp, "%d",tempInt);
+    // Handle Pump Control
+    if (String(topic) == topic_pump) {
+        if (message == "on") {
+            digitalWrite(PIN_PUMP, HIGH);
+            digitalWrite(PIN_LED, HIGH);
+        } else if (message == "off") {
+            digitalWrite(PIN_PUMP, LOW);
+            digitalWrite(PIN_LED, LOW);
+        }
+    }
+}
 
+void connectMQTT() {
+    while (!client.connected()) {
+        Serial.println("Connecting to MQTT...");
+        if (client.connect("ESP8266Client", mqtt_username, mqtt_password)) {
+            Serial.println("Connected to MQTT");
+            client.subscribe(topic_pump);
+        } else {
+            Serial.print("Failed, rc=");
+            Serial.print(client.state());
+            delay(2000);
+        }
+    }
+}
 
-  client.publish(levelTopic, lvl);
-  client.publish(tempTopic, tmp);
-  Serial.println("Published to mqtt");
-
-  client.loop();
-
-  checkMQTT();
-  delay(5000);
-  }
+float readPH() {
+    const int samples = 10;
+    float adc_resolution = 1024.0;
+    int ph_adc = 0;
+    for (int i = 0; i < samples; i++) {
+        ph_adc += analogRead(PIN_PH_SENSOR);
+        delay(10);
+    }
+    float voltage = (5.0 / adc_resolution) * (ph_adc / samples);
+    return 7.0 + ((2.5 - voltage) / 0.1841);  // Calibrated pH formula
 }
