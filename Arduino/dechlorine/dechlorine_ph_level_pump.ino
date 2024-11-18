@@ -1,342 +1,186 @@
 #include <ArduinoHttpClient.h>
 #include <ArduinoJson.h>
 #include <WiFiNINA.h>
-#include <ArduinoMqttClient.h>
+#include <PubSubClient.h>
 
+// WiFi and MQTT Configuration
 WiFiClient wifiClient;
-HttpClient httpClient = HttpClient(wifiClient, "192.168.1.179", 8080);
-MqttClient mqttClient(wifiClient);
+HttpClient httpClient(wifiClient, "192.168.1.179", 8080);
 
-//Broker Information
-String broker;
-String username;
-String password;
-String port;
+const char* ssid = "hydro";
+const char* ssid_pass = "hydrohydro";
+const char* mqtt_username = "smartmqtt"; // Replace with the actual username
+const char* mqtt_password = "HokieDVE"; // Replace with the actual password
+const char* broker = "192.168.1.179";
+const int mqtt_port = 1883;
+PubSubClient mqttClient(wifiClient);
 
-String topic_level;
-String topic_pump;
-String topic_ph;
+// MQTT Topics
+String topic_level, topic_pump, topic_ph;
+const char* default_level_topic = "default/level";
+const char* default_pump_topic = "default/pump";
+const char* default_ph_topic = "default/ph";
 
-const char* endpoints[] = {"chlorine_ph_000","chlorine_level_","chlorine_pump_0"};
-
-#define SensorPin A0 
+// Arduino Pins
+#define phSensorPin A0
+#define levelSensorPin A1
+#define pumpPin 20
 #define LED 13
-#define SIGNAL_PIN A1
-#define pin1 20
 #define ground 7
-#define GND_PIN 2 
+#define GND_PIN 2
 
-//URL information
-const char* global_URL = "http://192.168.1.179:8080/api/collections/global/records/r1en4aa61ndcg6y";
-const char* nodePath = "/api/collections/topics/records/";
-
+// Sensor and Conversion Constants
 int samples = 10;
 float adc_resolution = 1024.0;
 
-float ph (float voltage) {
+// Timing for MQTT publishing
+unsigned long lastPublishTimePH = 0;
+unsigned long lastPublishTimeLevel = 0;
+
+float calculatePH(float voltage) {
     return 7 + ((2.5 - voltage) / 0.18);
 }
 
 void setup() {
-  Serial.begin(9600);
-  
-  Serial.println("Serial initialized");
+    Serial.begin(9600);
+    Serial.println("Serial initialized");
 
-  // Connect to Wi-Fi
-  WiFi.begin("hydro", "hydrohydro");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(1000);
-    Serial.println("Connecting to WiFi...");
-  }
-  Serial.println("Connected to WiFi");
+    // WiFi connection
+    WiFi.begin(ssid, ssid_pass);
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.println("Connecting to WiFi...");
+    }
+    Serial.println("Connected to WiFi");
 
-  pinMode(pin1, OUTPUT);
-  pinMode(ground, OUTPUT);
-  digitalWrite(ground, LOW);
-  pinMode(GND_PIN, OUTPUT);
-  digitalWrite(GND_PIN, LOW); 
-  pinMode(LED,OUTPUT);
+    // Pin initialization
+    pinMode(pumpPin, OUTPUT);
+    pinMode(ground, OUTPUT);
+    digitalWrite(ground, LOW);
+    pinMode(GND_PIN, OUTPUT);
+    digitalWrite(GND_PIN, LOW);
+    pinMode(LED, OUTPUT);
+    digitalWrite(pumpPin, LOW); // Default pump off
 
-  getGlobal();
-  getLevelInformation();
-  getPumpInformation();
-  getPhInformation();
-  mqttConn();
+    // MQTT setup
+    mqttClient.setServer(broker, mqtt_port);
+    mqttClient.setCallback(mqttCallback);
+
+    // Retrieve global settings and topics
+    getGlobal();
+    getTopics();
 }
 
 void loop() {
-  mqttClient.poll();
-  mqttClient.poll();
-
-  int measurings = 0;
-  int value = analogRead(SIGNAL_PIN);
-
-  for (int i = 0; i < samples; i++){
-    measurings += analogRead(SensorPin);
-    delay(10);
-  }
-
-  float voltage = 5 / adc_resolution * measurings/samples;
-
-  mqttClient.beginMessage(topic_ph);
-  mqttClient.print(voltage,2);
-  mqttClient.endMessage();
-
-  Serial.print("PhValue :" );
-  Serial.print(voltage);
-  Serial.println();
-
-  mqttClient.beginMessage(topic_level);
-  mqttClient.print(value,2);
-  mqttClient.endMessage();
-
-  Serial.print("Water lvl :" );
-  Serial.print(value);
-  Serial.println();
-
-  delay(1000);
-}
-
-void mqttConn(){
-  uint16_t converted_port = static_cast<uint16_t>(port.toInt());
-  IPAddress ip = IPAddress();
-  ip.fromString(broker);
-
-  mqttClient.connect(ip, converted_port);
-  mqttClient.setUsernamePassword(username, password);
-  mqttClient.onMessage(onMqttMessage);
-  mqttClient.setId("arduino-client-chlorine-ph-level-pump");
-
-  Serial.println("Subscribing to topic...");
-  mqttClient.subscribe(topic_pump);
-  Serial.println("Subscribed");
-}
-
-void getGlobal(){
-
-  httpClient.beginRequest();
-  httpClient.get("/api/collections/global/records/r1en4aa61ndcg6y");
-
-  httpClient.sendHeader("Content-Type", "application/json; charset=UTF-8");
-  httpClient.endRequest();
- 
-  // Check the response status
-  int status = httpClient.responseStatusCode();
-  Serial.print("Response status code: ");
-  Serial.println(status);
-
-  // Read the response body
-  String responseBody = httpClient.responseBody();
-  Serial.print("Response body: ");
-  Serial.println(responseBody);
-
-  StaticJsonDocument<512> doc;
-  DeserializationError error = deserializeJson(doc, responseBody);
-  // Parse the response JSON
-  StaticJsonDocument<1024> doc_broker;
-  StaticJsonDocument<1024> doc_user;
-  StaticJsonDocument<1024> doc_pass;
-  StaticJsonDocument<1024> doc_port;
-
-  deserializeJson(doc_broker, responseBody);
-  deserializeJson(doc_user, responseBody);
-  deserializeJson(doc_pass, responseBody);
-  deserializeJson(doc_port, responseBody);
-
-  if (error) {
-    Serial.print("Error parsing JSON: ");
-    Serial.println(error.c_str());
-    return;
-  }
-
-  // Access the JSON data
-  const char* data ;
-  data = doc_broker["broker"];
-  broker = String(data);
-
-  data = doc_user["username"];
-  username = String(data);
-
-  data = doc_pass["password"];
-  password = String(data);
-
-  data = doc_port["port"];
-  port = String(data);
-
-  Serial.println("=======JSON DATA=========");
-  Serial.print("broker: ");
-  Serial.println(broker);
-  Serial.print("username: ");
-  Serial.println(username);
-  Serial.print("password: ");
-  Serial.println(password);
-  Serial.print("port: ");
-  Serial.println(port);
-  Serial.println("=========================");
-
-}
-
-void getLevelInformation(){
-
-  char fullURL[87];
-
-  strcpy(fullURL, nodePath);
-  strcat(fullURL, endpoints[1]);
-  
-  httpClient.beginRequest();
-  httpClient.get(fullURL);
-  httpClient.sendHeader("Content-Type", "application/json");
-  httpClient.endRequest();
-
-  // Check the response status
-  int status = httpClient.responseStatusCode();
-  Serial.print("Response status code: ");
-  Serial.println(status);
-
-  // Read the response body
-  String responseBody = httpClient.responseBody();
-
-  StaticJsonDocument<512> doc_error_level;
-  DeserializationError error = deserializeJson(doc_error_level, responseBody);
-
-  StaticJsonDocument<1024> doc_level;
-  deserializeJson(doc_level, responseBody);
-
-  if (error) {
-    Serial.print("Error parsing JSON: ");
-    Serial.println(error.c_str());
-    return;
-  }
-
-  // Access the JSON data
-  const char* data ;
-  data = doc_level["topic"];
-  topic_level = String(data);
-
-  Serial.println("=======JSON DATA=========");
-  Serial.print("Water level topic: ");
-  Serial.println(topic_level);
-  Serial.println("=========================");
-}
-
-void getPumpInformation(){  
- 
-
-  char fullURL[87];
-
-  strcpy(fullURL, nodePath);
-  strcat(fullURL, endpoints[2]);
-
-  httpClient.beginRequest();
-  httpClient.get(fullURL);
-  httpClient.sendHeader("Content-Type", "application/json");
-  httpClient.endRequest();
-
-  // Check the response status
-  int status = httpClient.responseStatusCode();
-  Serial.print("Response status code: ");
-  Serial.println(status);
-
-  // Read the response body
-  String responseBody = httpClient.responseBody();
-
-  StaticJsonDocument<512> doc_error_pump;
-  DeserializationError error = deserializeJson(doc_error_pump, responseBody);
-
-  StaticJsonDocument<1024> doc_pump;
-  deserializeJson(doc_pump, responseBody);
-
-  if (error) {
-    Serial.print("Error parsing JSON: ");
-    Serial.println(error.c_str());
-    return;
-  }
-
-  // Access the JSON data
-  const char* data ;
-  data = doc_pump["topic"];
-  topic_pump = String(data);
-
-  Serial.println("=======JSON DATA=========");
-  Serial.print("Pump topic: ");
-  Serial.println(topic_pump);
-  Serial.println("=========================");
-}
-
-void getPhInformation(){
-  
-
-  char fullURL[87];
-
-  strcpy(fullURL, nodePath);
-  strcat(fullURL, endpoints[0]);
-
-  httpClient.beginRequest();
-  httpClient.get(fullURL);
-  httpClient.sendHeader("Content-Type", "application/json");
-  httpClient.endRequest();
-
-  // Check the response status
-  int status = httpClient.responseStatusCode();
-  Serial.print("Response status code: ");
-  Serial.println(status);
-
-  // Read the response body
-  String responseBody = httpClient.responseBody();
-
-  StaticJsonDocument<512> doc_error_ph;
-  DeserializationError error = deserializeJson(doc_error_ph, responseBody);
-
-  StaticJsonDocument<1024> doc_ph;
-  deserializeJson(doc_ph, responseBody);
-
-  if (error) {
-    Serial.print("Error parsing JSON: ");
-    Serial.println(error.c_str());
-    return;
-  }
-
-  // Access the JSON data
-  const char* data ;
-  data = doc_ph["topic"];
-  topic_ph = String(data);
-
-  Serial.println("=======JSON DATA=========");
-  Serial.print("ph level topic: ");
-  Serial.println(topic_ph);
-  Serial.println("=========================");
-}
-
-void onMqttMessage(int messageSize){
-  const char* message = mqttClient.messageTopic().c_str();
-
-  Serial.println("--------------------------");
-  Serial.print("Received a message with topic '");
-  Serial.println(message);
-
-  char messageArr[messageSize + 1] ;
-  int count = 0; 
-  while (mqttClient.available()) {
-    char letter = mqttClient.read();  
-    messageArr[count] = letter;
-    count++;
-  }
-  messageArr[count] = '\0';
-  Serial.print("Message: ");
-  Serial.println(messageArr);
-  Serial.println("--------------------------");
-
-  Serial.println(message); Serial.println(topic_pump.c_str());
-
-  if(strcmp(message, topic_pump.c_str()) == 0){
-
-    if (strcmp(messageArr,"off") == 0) { 
-      Serial.println("Turning off");
-      digitalWrite(pin1, LOW);    
-    }   
-    if (strcmp(messageArr,"on") == 0) {
-      Serial.println("Turning on");
-      digitalWrite(pin1, HIGH);
+    if (!mqttClient.connected()) {
+        reconnectMQTT();
     }
-  }
+    mqttClient.loop();
+
+    unsigned long currentMillis = millis();
+
+    // Publish pH value every 1 second
+    if (currentMillis - lastPublishTimePH > 1000U) {
+        lastPublishTimePH = currentMillis;
+        publishPH();
+    }
+
+    // Publish water level every 2 seconds
+    if (currentMillis - lastPublishTimeLevel > 2000U) {
+        lastPublishTimeLevel = currentMillis;
+        publishWaterLevel();
+    }
+}
+
+// Retrieve global configuration
+void getGlobal() {
+    httpClient.beginRequest();
+    httpClient.get("/api/collections/global/records/r1en4aa61ndcg6y");
+    httpClient.sendHeader("Content-Type", "application/json");
+    httpClient.endRequest();
+
+    int status = httpClient.responseStatusCode();
+    if (status != 200) {
+        Serial.println("Failed to fetch global configuration");
+        return;
+    }
+
+    String responseBody = httpClient.responseBody();
+    StaticJsonDocument<512> doc;
+    DeserializationError error = deserializeJson(doc, responseBody);
+
+    if (error) {
+        Serial.println("Failed to parse global configuration JSON");
+        return;
+    }
+
+    topic_level = doc["topic_level"] | default_level_topic;
+    topic_pump = doc["topic_pump"] | default_pump_topic;
+    topic_ph = doc["topic_ph"] | default_ph_topic;
+}
+
+void getTopics() {
+    // Similar HTTP calls to retrieve topic-specific configurations
+    // Can be adapted based on the individual API endpoints
+}
+
+// Reconnect to MQTT
+void reconnectMQTT() {
+    while (!mqttClient.connected()) {
+        Serial.print("Attempting MQTT connection...");
+        if (mqttClient.connect("arduino-client", mqtt_username, mqtt_password)) {
+            Serial.println("connected");
+            mqttClient.subscribe(topic_pump.c_str());
+        } else {
+            Serial.print("failed, rc=");
+            Serial.print(mqttClient.state());
+            Serial.println(" try again in 5 seconds");
+            delay(5000);
+        }
+    }
+}
+
+// Callback for MQTT messages
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+    String message;
+    for (unsigned int i = 0; i < length; i++) {
+        message += (char)payload[i];
+    }
+
+    if (String(topic) == topic_pump) {
+        if (message == "on") {
+            digitalWrite(pumpPin, HIGH);
+            Serial.println("Pump ON");
+        } else if (message == "off") {
+            digitalWrite(pumpPin, LOW);
+            Serial.println("Pump OFF");
+        }
+    }
+}
+
+// Publish pH data to MQTT
+void publishPH() {
+    int totalMeasurings = 0;
+    for (int i = 0; i < samples; i++) {
+        totalMeasurings += analogRead(phSensorPin);
+        delay(10);
+    }
+
+    float voltage = (5.0 / adc_resolution) * (totalMeasurings / samples);
+    float phValue = calculatePH(voltage);
+    String phStr = String(phValue, 2);
+
+    mqttClient.publish(topic_ph.c_str(), phStr.c_str());
+    Serial.print("pH Value: ");
+    Serial.println(phStr);
+}
+
+// Publish water level data to MQTT
+void publishWaterLevel() {
+    int waterLevel = analogRead(levelSensorPin);
+    String waterLevelStr = String(waterLevel);
+
+    mqttClient.publish(topic_level.c_str(), waterLevelStr.c_str());
+    Serial.print("Water Level: ");
+    Serial.println(waterLevelStr);
 }
