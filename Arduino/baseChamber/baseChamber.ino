@@ -5,37 +5,37 @@
 #include <PubSubClient.h>
 
 // PINOUTS
-#define pin1 13
-#define testpin 2          
+#define PUMP_SIGNAL_PIN 13
+#define LED_PIN 2
 
-//WIFI Information 
-const char* ssid = "hydro";
-const char* ssid_pass = "hydrohydro";
+// WIFI Information
+const char* ssid = "hydro";         // Unified WIFI SSID
+const char* ssid_pass = "hydrohydro"; // Unified WIFI Password
 
-//Broker Information
-String broker ; 
-String username;
-String password;
-String port; 
+// Broker Information
+String broker = "192.168.8.210";    // Unified Broker IP Address
+String mqtt_username = "smartmqtt"; // Unified Broker Username
+String mqtt_password = "HokieDVE";  // Unified Broker Password
+String port = "1883";               // Unified Broker Port
 
-//Node information
-String topic_pump;
+// Node Topics
+String topic_pump = "basic_pump_control";        // Pump control topic
+String topic_outtake_pump = "base_chamber/outtake_pump"; // Outtake pump topic
 
-//URL information
+// URL Information
 const char* global_URL = "http://192.168.1.179:8080/api/collections/global/records/r1en4aa61ndcg6y";
 const char* node_URL = "http://192.168.1.179:8080/api/collections/topics/records/";
-
-//topic information 
 const char* endpoints[] = {"basic_pump_0000"};
 
-//MQTT conn
+// MQTT and WiFi Clients
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  
+
+  // WiFi Setup
   WiFi.begin(ssid, ssid_pass);
   Serial.println("Connecting to WiFi...");
   while (WiFi.status() != WL_CONNECTED) {
@@ -44,155 +44,127 @@ void setup() {
   }
   Serial.println("Connected to WiFi!");
 
-  pinMode(pin1, OUTPUT);
-  pinMode(testpin, OUTPUT);
+  // Pin Setup
+  pinMode(PUMP_SIGNAL_PIN, OUTPUT);
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(PUMP_SIGNAL_PIN, HIGH);
+  digitalWrite(LED_PIN, LOW);
 
+  // Fetch Configuration
   grabGlobalInformation();
   grabPumpInformation();
 
- Serial.print("Broker: "); Serial.println(broker);
- Serial.print("port: "); Serial.println(port);
- Serial.print("topic_pump: "); Serial.println(topic_pump);
- 
+  // MQTT Setup
   connectMQTT();
 }
 
 void loop() {
-
-  client.loop();  
+  if (!client.connected()) {
+    digitalWrite(LED_PIN, HIGH);
+    reconnect();
+    digitalWrite(LED_PIN, LOW);
+  }
+  client.loop();
+  delay(1000);
 }
 
+// MQTT Callback
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message;
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  Serial.print("Message arrived on topic: ");
+  Serial.println(topic);
+  Serial.print("Message: ");
+  Serial.println(message);
 
-void connectMQTT(){
-  uint16_t converted_port = static_cast<uint16_t>(port.toInt());
-  IPAddress ip = IPAddress();
-  ip.fromString(broker);
+  if (String(topic) == topic_pump) {
+    if (message == "on") {
+      digitalWrite(PUMP_SIGNAL_PIN, LOW);
+      Serial.println("Pump ON");
+    } else if (message == "off") {
+      digitalWrite(PUMP_SIGNAL_PIN, HIGH);
+      Serial.println("Pump OFF");
+    }
+  } else if (String(topic) == topic_outtake_pump) {
+    if (message == "Turn on") {
+      digitalWrite(PUMP_SIGNAL_PIN, LOW);
+      Serial.println("Outtake Pump ON");
+    } else if (message == "Turn off") {
+      digitalWrite(PUMP_SIGNAL_PIN, HIGH);
+      Serial.println("Outtake Pump OFF");
+    }
+  }
+}
 
-  client.setServer(ip, converted_port);
+// MQTT Connection
+void connectMQTT() {
+  client.setServer(broker.c_str(), port.toInt());
   client.setCallback(callback);
 
+  reconnect();
+}
+
+// MQTT Reconnect
+void reconnect() {
   while (!client.connected()) {
-      const char *client_id = "esp8266-client-basic-pump";
-      Serial.println("Connecting to mqtt broker.....");
-      if (client.connect(client_id)) {
-          Serial.println("Connected to broker");
-      } 
-      else {
-          Serial.print("failed with state ");
-          Serial.println(client.state());
-          delay(2000);
-      }
+    Serial.print("Attempting MQTT connection...");
+    if (client.connect("ESP8266Client", mqtt_username.c_str(), mqtt_password.c_str())) {
+      Serial.println("Connected to MQTT Broker!");
+      client.subscribe(topic_pump.c_str());
+      client.subscribe(topic_outtake_pump.c_str());
+    } else {
+      Serial.print("Failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" retrying in 5 seconds...");
+      delay(5000);
+    }
   }
-    
-  client.subscribe(topic_pump.c_str());
 }
 
-void callback(char *topic, byte *payload, unsigned int length) {
-
-    Serial.print("Message arrived in topic: ");
-    Serial.println(topic);
-    Serial.print("Message: ");
-
-    String message;
-    for (int i = 0; i < length; i++) {
-        message = message + (char) payload[i]; 
-    }
-    Serial.print(message);
-
-    if (strcmp(topic,topic_pump.c_str())==0) {
-      if (message == "off") { 
-        digitalWrite(pin1, LOW);
-        digitalWrite(testpin, LOW);
-      }   
-      if (message == "on") {
-        digitalWrite(pin1, HIGH);
-        digitalWrite(testpin, HIGH); 
-      }
-    }
-
-    Serial.println();
-    Serial.println("-----------------------");
-}
-
-
-void grabPumpInformation(){
+// Fetch Pump Information
+void grabPumpInformation() {
   HTTPClient http;
-  WiFiClient client;
-  int httpCode;
-
   char fullURL[87];
-
   strcpy(fullURL, node_URL);
   strcat(fullURL, endpoints[0]);
 
-  http.begin(client, fullURL);
-  httpCode = http.GET();
-
+  http.begin(fullURL);
+  int httpCode = http.GET();
   if (httpCode > 0) {
     String payload = http.getString();
-
-    DynamicJsonDocument doc_pump(1024);
-    deserializeJson(doc_pump, payload);
-    
-    const char* data;
-    data = doc_pump["topic"];
-    topic_pump = String(data);
-
-  }
-  else {
-      Serial.print("HTTP request failed with error code ");
-      Serial.println(httpCode);
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, payload);
+    topic_pump = String(doc["topic"]);
+    Serial.println("Updated Pump Topic: " + topic_pump);
+  } else {
+    Serial.println("Failed to fetch pump information");
   }
   http.end();
-
-  memset(fullURL, 0, sizeof(fullURL));
-  strcpy(fullURL, node_URL);
-  strcat(fullURL, endpoints[1]);
-  
-  Serial.println("=======JSON DATA=========");
-  Serial.print("Pump topic: "); Serial.println(topic_pump);
-  Serial.println("=========================");  
- 
 }
 
-void grabGlobalInformation(){
+// Fetch Global Information
+void grabGlobalInformation() {
   HTTPClient http;
-  WiFiClient client;
-  http.begin(client, global_URL);
+  http.begin(global_URL);
   int httpCode = http.GET();
-
   if (httpCode > 0) {
     String payload = http.getString();
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, payload);
 
-    DynamicJsonDocument doc_broker(1024); deserializeJson(doc_broker, payload);
-    DynamicJsonDocument doc_user(1024); deserializeJson(doc_user, payload);
-    DynamicJsonDocument doc_pass(1024); deserializeJson(doc_pass, payload);
-    DynamicJsonDocument doc_port(1024); deserializeJson(doc_port, payload);
-
-    const char* data;
-    data = doc_broker["broker"];
-    broker = String(data); 
-    
-    data = doc_user["username"];
-    username = String(data);
-
-    data = doc_pass["password"];
-    password = String(data);
-
-    data = doc_port["port"];
-    port = String(data);
-
+    broker = String(doc["broker"]);
+    mqtt_username = String(doc["username"]);
+    mqtt_password = String(doc["password"]);
+    port = String(doc["port"]);
+    Serial.println("Fetched Global Information:");
+    Serial.println("Broker: " + broker);
+    Serial.println("Username: " + mqtt_username);
+    Serial.println("Password: " + mqtt_password);
+    Serial.println("Port: " + port);
+  } else {
+    Serial.println("Failed to fetch global information");
   }
-  else {
-      Serial.print("HTTP request failed with error code ");
-      Serial.println(httpCode);
-    }
-
-  Serial.println("=======JSON DATA=========");
-  Serial.print("broker: "); Serial.println(broker);
-  Serial.print("username: "); Serial.println(username);
-  Serial.print("password: "); Serial.println(password);
-  Serial.print("port: "); Serial.println(port);
-  Serial.println("=========================");  
   http.end();
 }
