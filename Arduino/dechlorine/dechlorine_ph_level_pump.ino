@@ -1,51 +1,46 @@
-#include <ArduinoHttpClient.h>
+// Dependencies
 #include <ArduinoJson.h>
-#include <WiFiNINA.h>
+#include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-// WiFi and MQTT Configuration
-WiFiClient wifiClient;
-HttpClient httpClient(wifiClient, "192.168.1.179", 8080);
-
-const char* ssid = "hydro";
-const char* ssid_pass = "hydrohydro";
-const char* mqtt_username = "smartmqtt"; // Replace with the actual username
-const char* mqtt_password = "HokieDVE"; // Replace with the actual password
-const char* broker = "192.168.1.179";
+// WiFi Information
+const char* ssid = "CyberSec";
+const char* ssid_pass = "Cis401303";
+const char* broker = "192.168.8.210";
+const char* mqtt_username = "smartmqtt";
+const char* mqtt_password = "HokieDVE";
 const int mqtt_port = 1883;
-PubSubClient mqttClient(wifiClient);
 
 // MQTT Topics
-String topic_level, topic_pump, topic_ph;
-const char* default_level_topic = "default/level";
-const char* default_pump_topic = "default/pump";
-const char* default_ph_topic = "default/ph";
+const char* topic_outtake_pump = "dech_chamber/outtake_pump";
+const char* topic_ph = "dech_chamber/ph_sensor";
+const char* topic_level = "dech_chamber/water_level";
 
-// Arduino Pins
+// NodeMCU Pin Definitions
 #define phSensorPin A0
-#define levelSensorPin A1
-#define pumpPin 20
-#define LED 13
-#define ground 7
-#define GND_PIN 2
+#define levelSensor A0  // ESP8266 has only one ADC pin
+#define LED 13         // Use built-in LED
+#define pumpPin 20      // Reassign to valid GPIO
+#define ground 7       // Reassign to valid GPIO
 
-// Sensor and Conversion Constants
-int samples = 10;
+WiFiClient espClient;
+PubSubClient client(espClient);
+unsigned long lastMqttPublishTimePH = 0;
+unsigned long lastMqttPublishTimeWater = 0;
+
+// ADC resolution for ESP8266 (default 1V reference)
 float adc_resolution = 1024.0;
 
-// Timing for MQTT publishing
-unsigned long lastPublishTimePH = 0;
-unsigned long lastPublishTimeLevel = 0;
-
-float calculatePH(float voltage) {
-    return 7 + ((2.5 - voltage) / 0.18);
+// Converts voltage value to readable pH value
+float ph(float voltage) {
+    return 7 + ((2.5 - voltage) / 0.1841);
 }
 
 void setup() {
-    Serial.begin(9600);
-    Serial.println("Serial initialized");
+    Serial.begin(115200);
+    Serial.println("Starting...");
 
-    // WiFi connection
+    // Connect to Wi-Fi
     WiFi.begin(ssid, ssid_pass);
     while (WiFi.status() != WL_CONNECTED) {
         delay(1000);
@@ -53,134 +48,90 @@ void setup() {
     }
     Serial.println("Connected to WiFi");
 
-    // Pin initialization
+    // Configure Pins
     pinMode(pumpPin, OUTPUT);
     pinMode(ground, OUTPUT);
     digitalWrite(ground, LOW);
-    pinMode(GND_PIN, OUTPUT);
-    digitalWrite(GND_PIN, LOW);
     pinMode(LED, OUTPUT);
-    digitalWrite(pumpPin, LOW); // Default pump off
+    digitalWrite(pumpPin, HIGH); // Default pump state is OFF
 
     // MQTT setup
-    mqttClient.setServer(broker, mqtt_port);
-    mqttClient.setCallback(mqttCallback);
-
-    // Retrieve global settings and topics
-    getGlobal();
-    getTopics();
+    client.setServer(broker, mqtt_port);
+    client.setCallback(callback);
 }
 
 void loop() {
-    if (!mqttClient.connected()) {
-        reconnectMQTT();
+    // Ensure MQTT connection
+    if (!client.connected()) {
+        reconnect();
     }
-    mqttClient.loop();
+    client.loop();
 
-    unsigned long currentMillis = millis();
-
-    // Publish pH value every 1 second
-    if (currentMillis - lastPublishTimePH > 1000U) {
-        lastPublishTimePH = currentMillis;
-        publishPH();
+    // Read pH sensor
+    int measurings = 0;
+    for (int i = 0; i < 10; i++) {
+        measurings += analogRead(phSensorPin);
+        delay(10);
     }
 
-    // Publish water level every 2 seconds
-    if (currentMillis - lastPublishTimeLevel > 2000U) {
-        lastPublishTimeLevel = currentMillis;
-        publishWaterLevel();
+    // Publish pH value
+    if (millis() - lastMqttPublishTimePH > 1000U) {
+        lastMqttPublishTimePH = millis();
+        float voltage = (1.0 / adc_resolution) * (measurings / 10); // Adjust for 1.0V reference
+        float ph_level_value = ph(voltage);
+        String ph_value_str = String(ph_level_value, 2);
+        client.publish(topic_ph, ph_value_str.c_str());
+        Serial.print("PhValue: ");
+        Serial.println(ph_value_str);
+    }
+
+    // Publish water level
+    if (millis() - lastMqttPublishTimeWater > 2000U) {
+        lastMqttPublishTimeWater = millis();
+        String water_level_str = String(analogRead(levelSensor));
+        client.publish(topic_level, water_level_str.c_str());
+        Serial.print("Water level: ");
+        Serial.println(water_level_str);
     }
 }
 
-// Retrieve global configuration
-void getGlobal() {
-    httpClient.beginRequest();
-    httpClient.get("/api/collections/global/records/r1en4aa61ndcg6y");
-    httpClient.sendHeader("Content-Type", "application/json");
-    httpClient.endRequest();
-
-    int status = httpClient.responseStatusCode();
-    if (status != 200) {
-        Serial.println("Failed to fetch global configuration");
-        return;
-    }
-
-    String responseBody = httpClient.responseBody();
-    StaticJsonDocument<512> doc;
-    DeserializationError error = deserializeJson(doc, responseBody);
-
-    if (error) {
-        Serial.println("Failed to parse global configuration JSON");
-        return;
-    }
-
-    topic_level = doc["topic_level"] | default_level_topic;
-    topic_pump = doc["topic_pump"] | default_pump_topic;
-    topic_ph = doc["topic_ph"] | default_ph_topic;
-}
-
-void getTopics() {
-    // Similar HTTP calls to retrieve topic-specific configurations
-    // Can be adapted based on the individual API endpoints
-}
-
-// Reconnect to MQTT
-void reconnectMQTT() {
-    while (!mqttClient.connected()) {
+void reconnect() {
+    while (!client.connected()) {
         Serial.print("Attempting MQTT connection...");
-        if (mqttClient.connect("arduino-client", mqtt_username, mqtt_password)) {
-            Serial.println("connected");
-            mqttClient.subscribe(topic_pump.c_str());
+        String clientId = "ESP8266Client-" + String(random(0xffff), HEX);
+        if (client.connect(clientId.c_str(), mqtt_username, mqtt_password)) {
+            Serial.println("Connected to MQTT");
+            client.subscribe(topic_outtake_pump);
         } else {
-            Serial.print("failed, rc=");
-            Serial.print(mqttClient.state());
-            Serial.println(" try again in 5 seconds");
+            Serial.print("Failed, rc=");
+            Serial.print(client.state());
+            Serial.println(". Retrying in 5 seconds...");
             delay(5000);
         }
     }
 }
 
-// Callback for MQTT messages
-void mqttCallback(char* topic, byte* payload, unsigned int length) {
+void callback(char* topic, byte* payload, unsigned int length) {
+    Serial.print("Message arrived [");
+    Serial.print(topic);
+    Serial.print("] ");
+    for (int i = 0; i < length; i++) {
+        Serial.print((char)payload[i]);
+    }
+    Serial.println();
+
     String message;
-    for (unsigned int i = 0; i < length; i++) {
+    for (int i = 0; i < length; i++) {
         message += (char)payload[i];
     }
 
-    if (String(topic) == topic_pump) {
-        if (message == "on") {
-            digitalWrite(pumpPin, HIGH);
+    if (strcmp(topic, topic_outtake_pump) == 0) {
+        if (message == "Turn on") {
+            digitalWrite(pumpPin, LOW); // Activate pump
             Serial.println("Pump ON");
-        } else if (message == "off") {
-            digitalWrite(pumpPin, LOW);
+        } else if (message == "Turn off") {
+            digitalWrite(pumpPin, HIGH); // Deactivate pump
             Serial.println("Pump OFF");
         }
     }
-}
-
-// Publish pH data to MQTT
-void publishPH() {
-    int totalMeasurings = 0;
-    for (int i = 0; i < samples; i++) {
-        totalMeasurings += analogRead(phSensorPin);
-        delay(10);
-    }
-
-    float voltage = (5.0 / adc_resolution) * (totalMeasurings / samples);
-    float phValue = calculatePH(voltage);
-    String phStr = String(phValue, 2);
-
-    mqttClient.publish(topic_ph.c_str(), phStr.c_str());
-    Serial.print("pH Value: ");
-    Serial.println(phStr);
-}
-
-// Publish water level data to MQTT
-void publishWaterLevel() {
-    int waterLevel = analogRead(levelSensorPin);
-    String waterLevelStr = String(waterLevel);
-
-    mqttClient.publish(topic_level.c_str(), waterLevelStr.c_str());
-    Serial.print("Water Level: ");
-    Serial.println(waterLevelStr);
 }
