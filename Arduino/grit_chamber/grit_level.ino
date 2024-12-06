@@ -16,8 +16,8 @@ String port = "1883";
 WiFiClient espClient;
 PubSubClient client(espClient);
 //WIFI Information 
-const char* ssid = "Testbed-W";
-const char* ssid_pass = "HokieDVE";
+const char* ssid = "CyberSec";
+const char* ssid_pass = "Cis401303";
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(115200);
