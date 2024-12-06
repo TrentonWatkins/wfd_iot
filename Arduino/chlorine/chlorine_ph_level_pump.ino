@@ -1,12 +1,10 @@
-#include <ArduinoHttpClient.h>
-#include <ArduinoJson.h>
-#include <WiFiNINA.h>
+#include <ESP8266WiFi.h>
 #include <PubSubClient.h>
-#include <ArduinoMqttClient.h>
+#include <ArduinoJson.h>
 
 // WiFi and MQTT information
-const char* ssid = "Testbed-W";
-const char* ssid_pass = "HokieDVE";
+const char* ssid = "CyberSec";
+const char* ssid_pass = "Cis401303";
 const char* broker = "192.168.8.210";
 const char* mqtt_username = "smartmqtt";
 const char* mqtt_password = "HokieDVE";
@@ -14,22 +12,20 @@ const int mqtt_port = 1883;
 
 // WiFi and MQTT clients
 WiFiClient wifiClient;
-HttpClient httpClient(wifiClient, "192.168.8.210", 8080);
-PubSubClient client(wifiClient);    // For PubSubClient
-MqttClient mqttClient(wifiClient);  // For ArduinoMqttClient
+PubSubClient client(wifiClient);
 
 // Topics
-const char* topic_outtake_pump = "chlo_chamber/outtake_pump";  
-const char* topic_ph = "chlo_chamber/ph_sensor";  
-const char* topic_level = "chlo_chamber/water_level";  
+const char* topic_outtake_pump = "chlo_chamber/outtake_pump";
+const char* topic_ph = "chlo_chamber/ph_sensor";
+const char* topic_level = "chlo_chamber/water_level";
 
 // Pins
 #define phSensorPin A0
-#define levelSensor A1
+#define levelSensor 20
 #define LED 13
-#define pumpPin 0
+#define pumpPin 0 // Adjust pin as per your setup
 #define ground 7
-#define GND_PIN 2 
+#define GND_PIN 2
 
 // Variables for pH calculation and delays
 int samples = 10;
@@ -39,11 +35,11 @@ unsigned long lastMqttPublishTimeWater = 0;
 
 // Converts voltage to pH value
 float ph(float voltage) {
-    return 7 + ((2.5 - voltage) / 0.1841);
+  return 7 + ((2.5 - voltage) / 0.1841);
 }
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println("Initializing...");
 
   // Connect to Wi-Fi
@@ -59,24 +55,19 @@ void setup() {
   pinMode(ground, OUTPUT);
   digitalWrite(ground, LOW);
   pinMode(GND_PIN, OUTPUT);
-  digitalWrite(GND_PIN, LOW); 
+  digitalWrite(GND_PIN, LOW);
   pinMode(LED, OUTPUT);
-  digitalWrite(pumpPin, HIGH);  // Default pump state: off
+  digitalWrite(pumpPin, HIGH); // Default pump state: off
 
-  // Configure PubSubClient and ArduinoMqttClient
+  // Configure PubSubClient
   client.setServer(broker, mqtt_port);
   client.setCallback(pubSubCallback);
-
-  mqttClient.begin(broker, mqtt_port, wifiClient);
-  mqttClient.setUsernamePassword(mqtt_username, mqtt_password);
-  mqttClient.setId("arduino-client");
-  mqttClient.onMessage(arduinoMqttCallback);
 }
 
 void loop() {
   // Ensure MQTT connection
   if (!client.connected()) {
-    reconnectPubSub();
+    reconnect();
   }
   client.loop();
 
@@ -91,7 +82,7 @@ void loop() {
   // Publish pH level every second
   if (millis() - lastMqttPublishTimePH > 1000U) {
     lastMqttPublishTimePH = millis();
-    float voltage = (5.0 / adc_resolution) * (measurings / samples);
+    float voltage = (3.3 / adc_resolution) * (measurings / samples);
     float ph_level_value = ph(voltage);
     String ph_value_str = String(ph_level_value, 2);
     client.publish(topic_ph, ph_value_str.c_str());
@@ -107,14 +98,12 @@ void loop() {
     Serial.print("Water level: ");
     Serial.println(water_level_str);
   }
-
-  delay(1000); // General delay for loop
 }
 
 /*
-  Reconnect PubSubClient
+  Reconnect MQTT
 */
-void reconnectPubSub() {
+void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     String clientId = "ESP8266Client-";
@@ -145,40 +134,14 @@ void pubSubCallback(char* topic, byte* payload, unsigned int length) {
 
   String message;
   for (int i = 0; i < length; i++) {
-    message += (char)payload[i]; 
+    message += (char)payload[i];
   }
 
   if (strcmp(topic, topic_outtake_pump) == 0) {
     if (message == "Turn on") {
-        digitalWrite(pumpPin, LOW);
-        Serial.println("Pump ON");
-    } else if (message == "Turn off") {
-        digitalWrite(pumpPin, HIGH);
-        Serial.println("Pump OFF");
-    }
-  }
-}
-
-/*
-  ArduinoMqttClient callback
-*/
-void arduinoMqttCallback(int messageSize) {
-  String topic = mqttClient.messageTopic();
-  Serial.print("Message received on topic: ");
-  Serial.println(topic);
-
-  String payload = "";
-  while (mqttClient.available()) {
-    char c = mqttClient.read();
-    payload += c;
-  }
-  Serial.println("Payload: " + payload);
-
-  if (topic == topic_outtake_pump) {
-    if (payload == "Turn on") {
       digitalWrite(pumpPin, LOW);
       Serial.println("Pump ON");
-    } else if (payload == "Turn off") {
+    } else if (message == "Turn off") {
       digitalWrite(pumpPin, HIGH);
       Serial.println("Pump OFF");
     }
