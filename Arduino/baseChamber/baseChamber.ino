@@ -4,7 +4,7 @@
 #include <PubSubClient.h>
 
 //Sensor and Motor Ports
-#define OUTTAKE_PUMP_SIGNAL 12
+#define OUTTAKE_PUMP_SIGNAL 13
 
 //Broker Information
 String broker = "192.168.8.210"; 
