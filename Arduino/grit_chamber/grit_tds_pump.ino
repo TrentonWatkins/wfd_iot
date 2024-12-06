@@ -15,8 +15,8 @@ Adafruit_ESP8266 ads1115;	// Construct an ads1115
 #define OUTTAKE_PUMP_SIGNAL 13
 
 //WIFI Information 
-const char* ssid = "Testbed-W";
-const char* ssid_pass = "HokieDVE";
+const char* ssid = "CyberSec";
+const char* ssid_pass = "Cis401303";
 String broker = "192.168.8.210"; 
 String mqtt_username = "smartmqtt";
 String mqtt_password = "HokieDVE";
