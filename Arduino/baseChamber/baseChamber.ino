@@ -1,41 +1,28 @@
-#include <ArduinoJson.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
 #include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 
-// PINOUTS
-#define PUMP_SIGNAL_PIN 13
-#define LED_PIN 2
+//Sensor and Motor Ports
+#define OUTTAKE_PUMP_SIGNAL 12
 
-// WIFI Information
-const char* ssid = "hydro";         // Unified WIFI SSID
-const char* ssid_pass = "hydrohydro"; // Unified WIFI Password
-
-// Broker Information
-String broker = "192.168.8.210";    // Unified Broker IP Address
-String mqtt_username = "smartmqtt"; // Unified Broker Username
-String mqtt_password = "HokieDVE";  // Unified Broker Password
-String port = "1883";               // Unified Broker Port
-
-// Node Topics
-String topic_pump = "basic_pump_control";        // Pump control topic
-String topic_outtake_pump = "base_chamber/outtake_pump"; // Outtake pump topic
-
-// URL Information
-const char* global_URL = "http://192.168.1.179:8080/api/collections/global/records/r1en4aa61ndcg6y";
-const char* node_URL = "http://192.168.1.179:8080/api/collections/topics/records/";
-const char* endpoints[] = {"basic_pump_0000"};
-
-// MQTT and WiFi Clients
+//Broker Information
+String broker = "192.168.8.210"; 
+String mqtt_username = "smartmqtt";
+String mqtt_password = "HokieDVE";
+String port = "1883"; 
 WiFiClient espClient;
 PubSubClient client(espClient);
-
+//Node information  
+String topic_outtake_pump = "base_chamber/outtake_pump";  
+//WIFI Information 
+const char* ssid = "CyberSec";
+const char* ssid_pass = "Cis401303";
 void setup() {
+  // put your setup code here, to run once:
   Serial.begin(115200);
   delay(1000);
-
-  // WiFi Setup
+  
   WiFi.begin(ssid, ssid_pass);
   Serial.println("Connecting to WiFi...");
   while (WiFi.status() != WL_CONNECTED) {
@@ -44,127 +31,75 @@ void setup() {
   }
   Serial.println("Connected to WiFi!");
 
-  // Pin Setup
-  pinMode(PUMP_SIGNAL_PIN, OUTPUT);
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(PUMP_SIGNAL_PIN, HIGH);
-  digitalWrite(LED_PIN, LOW);
-
-  // Fetch Configuration
-  grabGlobalInformation();
-  grabPumpInformation();
-
-  // MQTT Setup
-  connectMQTT();
+  pinMode(OUTTAKE_PUMP_SIGNAL, OUTPUT); // Turns on the water pump PIN 12/D6
+  pinMode(BUILTIN_LED, OUTPUT);     // Initialize the BUILTIN_LED pin as an output
+  //By default turns off the pumps
+  digitalWrite(OUTTAKE_PUMP_SIGNAL, HIGH);
+  digitalWrite(BUILTIN_LED, LOW);
 }
 
-void loop() {
-  if (!client.connected()) {
-    digitalWrite(LED_PIN, HIGH);
-    reconnect();
-    digitalWrite(LED_PIN, LOW);
-  }
-  client.loop();
-  delay(1000);
-}
-
-// MQTT Callback
 void callback(char* topic, byte* payload, unsigned int length) {
+  Serial.print("Message arrived [");
+  Serial.print(topic);
+  Serial.print("] ");
+  for (int i = 0; i < length; i++) {
+    Serial.print((char)payload[i]);
+  }
+  Serial.println();
   String message;
   for (int i = 0; i < length; i++) {
-    message += (char)payload[i];
+      message = message + (char) payload[i]; 
   }
-  Serial.print("Message arrived on topic: ");
-  Serial.println(topic);
-  Serial.print("Message: ");
-  Serial.println(message);
-
-  if (String(topic) == topic_pump) {
-    if (message == "on") {
-      digitalWrite(PUMP_SIGNAL_PIN, LOW);
-      Serial.println("Pump ON");
-    } else if (message == "off") {
-      digitalWrite(PUMP_SIGNAL_PIN, HIGH);
-      Serial.println("Pump OFF");
-    }
-  } else if (String(topic) == topic_outtake_pump) {
+  if (strcmp(topic, topic_outtake_pump.c_str()) == 0)
+  {
     if (message == "Turn on") {
-      digitalWrite(PUMP_SIGNAL_PIN, LOW);
-      Serial.println("Outtake Pump ON");
-    } else if (message == "Turn off") {
-      digitalWrite(PUMP_SIGNAL_PIN, HIGH);
-      Serial.println("Outtake Pump OFF");
-    }
+        digitalWrite(OUTTAKE_PUMP_SIGNAL, LOW);   // Turn the LED on (Note that LOW is the voltage level
+        Serial.println("Pump ON");
+        // but actually the LED is on; this is because
+        // it is acive low on the ESP-01)
+      } else if (message == "Turn off"){
+        digitalWrite(OUTTAKE_PUMP_SIGNAL, HIGH);  // Turn the LED off by making the voltage HIGH
+        Serial.println("Pump OFF");
+      }
   }
+ 
 }
 
-// MQTT Connection
-void connectMQTT() {
-  client.setServer(broker.c_str(), port.toInt());
-  client.setCallback(callback);
-
-  reconnect();
-}
-
-// MQTT Reconnect
 void reconnect() {
+  uint16_t converted_port = static_cast<uint16_t>(port.toInt());
+  IPAddress ip = IPAddress();
+  ip.fromString(broker);
+
+  client.setServer(ip, converted_port);
+  client.setCallback(callback);
+  // Loop until we're reconnected
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
-    if (client.connect("ESP8266Client", mqtt_username.c_str(), mqtt_password.c_str())) {
-      Serial.println("Connected to MQTT Broker!");
-      client.subscribe(topic_pump.c_str());
+    // Create a random client ID
+    String clientId = "ESP8266Client-";
+    clientId += String(random(0xffff), HEX);
+    // Attempt to connect
+    if (client.connect(clientId.c_str(), mqtt_username.c_str(), mqtt_password.c_str())) {
+      Serial.println("connected");
+      // Once connected, publish an announcement...
+      // ... and resubscribe
       client.subscribe(topic_outtake_pump.c_str());
     } else {
-      Serial.print("Failed, rc=");
+      Serial.print("failed, rc=");
       Serial.print(client.state());
-      Serial.println(" retrying in 5 seconds...");
+      Serial.println(" try again in 5 seconds");
+      // Wait 5 seconds before retrying
       delay(5000);
     }
   }
 }
 
-// Fetch Pump Information
-void grabPumpInformation() {
-  HTTPClient http;
-  char fullURL[87];
-  strcpy(fullURL, node_URL);
-  strcat(fullURL, endpoints[0]);
-
-  http.begin(fullURL);
-  int httpCode = http.GET();
-  if (httpCode > 0) {
-    String payload = http.getString();
-    DynamicJsonDocument doc(1024);
-    deserializeJson(doc, payload);
-    topic_pump = String(doc["topic"]);
-    Serial.println("Updated Pump Topic: " + topic_pump);
-  } else {
-    Serial.println("Failed to fetch pump information");
+void loop() {
+  if (!client.connected()) {
+    digitalWrite(BUILTIN_LED, HIGH);
+    reconnect();
+    digitalWrite(BUILTIN_LED, LOW);
   }
-  http.end();
-}
-
-// Fetch Global Information
-void grabGlobalInformation() {
-  HTTPClient http;
-  http.begin(global_URL);
-  int httpCode = http.GET();
-  if (httpCode > 0) {
-    String payload = http.getString();
-    DynamicJsonDocument doc(1024);
-    deserializeJson(doc, payload);
-
-    broker = String(doc["broker"]);
-    mqtt_username = String(doc["username"]);
-    mqtt_password = String(doc["password"]);
-    port = String(doc["port"]);
-    Serial.println("Fetched Global Information:");
-    Serial.println("Broker: " + broker);
-    Serial.println("Username: " + mqtt_username);
-    Serial.println("Password: " + mqtt_password);
-    Serial.println("Port: " + port);
-  } else {
-    Serial.println("Failed to fetch global information");
-  }
-  http.end();
+  client.loop();
+  delay(1000);
 }
