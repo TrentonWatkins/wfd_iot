@@ -23,7 +23,7 @@ const char* topic_temp = "qual_chamber/water_temp";
 #define phSensorPin A0 // Only ADC pin on ESP8266
 #define levelSensor D1
 #define LED D2
-#define pumpPin D3
+#define pumpPin 13
 #define ground D4
 #define waterTemp D5
 
