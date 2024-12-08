@@ -5,10 +5,10 @@
 // WiFi and MQTT information
 const char* ssid = "CyberSec";
 const char* ssid_pass = "Cis401303";
-const char* broker = "192.168.8.210";
-const char* mqtt_username = "smartmqtt";
-const char* mqtt_password = "HokieDVE";
-const int mqtt_port = 1883;
+const char* broker = "bf24f004.ala.us-east-1.emqxsl.com";  // EMQX broker endpoint
+const char* mqtt_username = "VMIWFD";  // MQTT username for authentication
+const char* mqtt_password = "public";  // MQTT password for authentication
+const int mqtt_port = 1883;  // MQTT port (TCP)
 
 // WiFi and MQTT clients
 WiFiClient wifiClient;
@@ -147,3 +147,4 @@ void pubSubCallback(char* topic, byte* payload, unsigned int length) {
     }
   }
 }
+
