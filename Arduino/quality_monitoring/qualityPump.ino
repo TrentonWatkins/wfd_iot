@@ -8,10 +8,10 @@ const char* ssid = "CyberSec";
 const char* ssid_pass = "Cis401303";
 
 // MQTT Broker Information
-const char* broker = "192.168.8.210";
+const char* broker = "bf24f004.ala.us-east-1.emqxsl.com";
 const uint16_t port = 1883;
-const char* mqtt_username = "smartmqtt";
-const char* mqtt_password = "HokieDVE";
+const char* mqtt_username = "VMIWFD";
+const char* mqtt_password = "public";
 
 // MQTT Topics
 const char* topic_outtake_pump = "qual_chamber/outtake_pump";
