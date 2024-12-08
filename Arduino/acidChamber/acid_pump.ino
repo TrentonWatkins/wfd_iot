@@ -8,10 +8,12 @@
 #define OUTTAKE_PUMP_SIGNAL 13 // Represents the Digital Signal responsible for activating the pump
 
 //Broker Information
-String broker = "192.168.8.210"; //Broker IP Address
-String mqtt_username = "smartmqtt"; //Broker Username
-String mqtt_password = "HokieDVE"; //Broker Password
-String port = "1883"; //Broker Port Number
+const char* ssid = "CyberSec";
+const char* ssid_pass = "Cis401303";
+const char* broker = "bf24f004.ala.us-east-1.emqxsl.com";  // EMQX broker endpoint
+const char* mqtt_username = "VMIWFD";  // MQTT username for authentication
+const char* mqtt_password = "public";  // MQTT password for authentication
+const int mqtt_port = 1883;  // MQTT port (TCP)
 WiFiClient espClient; // NodeMCU library to connect to Wifi.
 PubSubClient client(espClient); //MQTT Library to publishing and subscribing to topics.
 //MQTT Topic information  
