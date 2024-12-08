@@ -7,9 +7,9 @@
 #define OUTTAKE_PUMP_SIGNAL 13
 
 //Broker Information
-String broker = "192.168.8.210"; 
-String mqtt_username = "smartmqtt";
-String mqtt_password = "HokieDVE";
+String broker = "bf24f004.ala.us-east-1.emqxsl.com"; // Default broker IP
+String mqtt_username = "VMIWFD";
+String mqtt_password = "public";
 String port = "1883"; 
 WiFiClient espClient;
 PubSubClient client(espClient);
