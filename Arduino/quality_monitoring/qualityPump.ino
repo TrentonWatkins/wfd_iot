@@ -20,17 +20,14 @@ const char* topic_level = "qual_chamber/water_level";
 const char* topic_temp = "qual_chamber/water_temp";
 
 // GPIO Pins
-#define phSensorPin A0 // Only ADC pin on ESP8266
-#define levelSensor D1
-#define LED D2
-#define pumpPin 13
-#define ground D4
-#define waterTemp D5
+#define ONE_WIRE_BUS 2 // OneWire data bus pin
+#define phSensorPin A0  // Analog pin for pH sensor
+#define pumpPin 13      // Digital pin for pump control
 
 // Variables
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
-OneWire oneWire(waterTemp);
+OneWire oneWire(ONE_WIRE_BUS);
 DallasTemperature sensors(&oneWire);
 float temp;
 
@@ -42,7 +39,7 @@ float calculatePh(float voltage) {
 // WiFi Connection
 void connectWiFi() {
   Serial.print("Connecting to WiFi...");
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssid, ssid_pass);
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.print(".");
@@ -97,9 +94,6 @@ void setup() {
   connectWiFi();
 
   pinMode(pumpPin, OUTPUT);
-  pinMode(ground, OUTPUT);
-  pinMode(LED, OUTPUT);
-  digitalWrite(ground, LOW);
   digitalWrite(pumpPin, HIGH);
 
   sensors.begin();
@@ -112,6 +106,7 @@ void loop() {
   }
   mqttClient.loop();
 
+  // Read temperature using DallasTemperature library
   sensors.requestTemperatures();
   temp = sensors.getTempCByIndex(0);
   if (temp != DEVICE_DISCONNECTED_C) {
@@ -122,18 +117,19 @@ void loop() {
     Serial.println("Error reading temperature");
   }
 
-  int waterLevelValue = analogRead(levelSensor);
-  mqttClient.publish(topic_level, String(waterLevelValue).c_str());
-  Serial.print("Water Level: ");
-  Serial.println(waterLevelValue);
-
+  // Read pH value
   int phRaw = analogRead(phSensorPin);
-  float voltage = (phRaw / 1024.0) * 5.0;
+  float voltage = (phRaw / 1024.0) * 3.3; // Adjust for ESP8266 ADC reference voltage
   float phValue = calculatePh(voltage);
   mqttClient.publish(topic_ph, String(phValue).c_str());
   Serial.print("pH Level: ");
   Serial.println(phValue);
 
+  // Read water level (simulated via analogRead)
+  int waterLevelValue = analogRead(phSensorPin); // Placeholder for a level sensor
+  mqttClient.publish(topic_level, String(waterLevelValue).c_str());
+  Serial.print("Water Level: ");
+  Serial.println(waterLevelValue);
+
   delay(1000);
 }
-
